@@ -71,7 +71,24 @@ theta_deg = 45
 # Simuler pour différentes températures
 x_cold, y_cold = simulate_pass_with_drag_and_temp(x0, y0, v0, theta_deg, temp_C=-10)  # froid
 x_mild, y_mild = simulate_pass_with_drag_and_temp(x0, y0, v0, theta_deg, temp_C=15)   # standard
-x_hot, y_hot = simulate_pass_with_drag_and_temp(x0, y0, v0, theta_deg, temp_C=35)      # chaud
+x_hot, y_hot = simulate_pass_with_drag_and_temp(x0, y0, v0, theta_deg, temp_C=35)     # chaud
+
+# Trouver les interceptions y=1
+def find_y_interception(x_array, y_array, target_y=1):
+    for i in range(len(y_array) - 1):
+        if y_array[i] >= target_y and y_array[i + 1] < target_y:
+            # Interpolation linéaire pour trouver l'interception exacte
+            t = (target_y - y_array[i]) / (y_array[i + 1] - y_array[i])
+            return x_array[i] + t * (x_array[i + 1] - x_array[i])
+    return None
+
+x_cold_intercept = find_y_interception(x_cold, y_cold)
+x_mild_intercept = find_y_interception(x_mild, y_mild)
+x_hot_intercept = find_y_interception(x_hot, y_hot)
+
+print(f"Interception y=1 (froid): {x_cold_intercept:.2f} yards")
+print(f"Interception y=1 (tempéré): {x_mild_intercept:.2f} yards")
+print(f"Interception y=1 (chaud): {x_hot_intercept:.2f} yards")
 
 # 🎨 Tracer
 plt.figure(figsize=(10,6))
