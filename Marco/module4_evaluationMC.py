@@ -160,11 +160,11 @@ def compare_strategies(model, feature_names, nfl_params, num_drives=1000, verbos
 
         # Initialiser les compteurs
         outcomes = {"TOUCHDOWN": 0, "TURNOVER_ON_DOWNS": 0, "FUMBLE": 0,
-                    "INTERCEPTION": 0}
+                    "INTERCEPTION": 0, "FIELD_GOAL_FAILURE": 0, "FIELD_GOAL_SUCCESS": 0}
         total_points = 0
         total_yards = 0
         total_plays = 0
-        play_types = {"run": 0, "pass": 0}
+        play_types = {"run": 0, "pass": 0, "field_goal": 0}
 
         # Simuler les drives
         if verbose:

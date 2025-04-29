@@ -40,11 +40,17 @@ def load_and_clean_nfl_data(file_path):
     df.loc[pass_mask, 'play_type'] = 'pass'
 
     # Identifier les courses (ni passe ni jeu spécial)
-    run_mask = (~pass_mask) & (~df['isSTPlay'])
+    run_mask = (~pass_mask) & (~df['isSTPlay']) & (df['PlayResult'].notna())
     df.loc[run_mask, 'play_type'] = 'run'
+
 
     # Filtrer pour ne garder que les jeux de type "pass" et "run" pour les downs 1-4
     filtered_df = df[(df['play_type'].isin(['pass', 'run'])) & (df['down'].isin([1, 2, 3, 4]))].copy()
+
+    # Statistiques sur les types de jeux identifiés
+    play_type_counts = filtered_df['play_type'].value_counts()
+    print("\nRépartition des types de jeux identifiés:")
+    print(play_type_counts)
 
     print(f"Nombre de jeux après filtrage (uniquement pass/run et downs 1-4): {len(filtered_df)}")
 
@@ -235,7 +241,7 @@ def extract_simulation_parameters(df):
     )
 
     # 7. Paramètres spécifiques par position sur le terrain
-    field_stats = df.groupby(['field_position_category', 'play_type'], observed=False)['PlayResult'].agg(['mean']).reset_index()
+    field_stats = df.groupby(['field_position_category', 'play_type'], observed=False)['PlayResult'].agg(['mean', 'std']).reset_index()
     params['field_adjustments'] = {}
 
     for _, row in field_stats.iterrows():
@@ -245,7 +251,8 @@ def extract_simulation_parameters(df):
             params['field_adjustments'][position] = {}
 
         params['field_adjustments'][position][play_type] = {
-            'mean_adjust': row['mean'] - params[f'{play_type}_mean']
+            'mean_adjust': row['mean'] - params[f'{play_type}_mean'],
+            'std_adjust': row['std'] - params[f'{play_type}_std']  # Ajout de l'ajustement d'écart-type
         }
 
     # 8. Catégories pour les yards à franchir
@@ -253,18 +260,92 @@ def extract_simulation_parameters(df):
                                     bins=[0, 3, 6, 10, 20, 100],
                                     labels=['1-3', '4-6', '7-10', '11-20', '20+'])
 
-    # 9. Distribution des choix de jeu
-    play_choice_stats = df.groupby(['down', 'yardage_category', 'field_position_category'], observed=False)[
-        'play_type'].value_counts(normalize=True).unstack().reset_index()
+    # 9. Distribution des choix de jeu avec informations supplémentaires
+    # Créer une table de probabilités plus précise
+    play_choice_data = []
+
+    # Pour chaque combinaison de down, yards à franchir et position
+    for down in range(1, 5):
+        for yard_cat in ['1-3', '4-6', '7-10', '11-20', '20+']:
+            for pos_cat in ['0-20', '20-50', '50-80', '80-100']:
+                # Filtrer les données
+                filtered = df[(df['down'] == down) &
+                              (df['yardage_category'] == yard_cat) &
+                              (df['field_position_category'] == pos_cat)]
+
+                if len(filtered) > 0:
+                    # Calculer les probabilités
+                    run_prob = (filtered['play_type'] == 'run').mean()
+                    pass_prob = 1 - run_prob
+
+                    # Ajouter les statistiques de résultat
+                    run_yards_mean = filtered[filtered['play_type'] == 'run'][
+                        'PlayResult'].mean() if len(
+                        filtered[filtered['play_type'] == 'run']) > 0 else np.nan
+                    pass_yards_mean = filtered[filtered['play_type'] == 'pass'][
+                        'PlayResult'].mean() if len(
+                        filtered[filtered['play_type'] == 'pass']) > 0 else np.nan
+
+                    play_choice_data.append({
+                        'down': down,
+                        'yardage_category': yard_cat,
+                        'field_position_category': pos_cat,
+                        'run': run_prob,
+                        'pass': pass_prob,
+                        'run_yards_mean': run_yards_mean,
+                        'pass_yards_mean': pass_yards_mean,
+                        'num_plays': len(filtered)
+                    })
+
+    play_choice_stats = pd.DataFrame(play_choice_data)
     params['play_choice_stats'] = play_choice_stats
 
-    # 10. Afficher un résumé des paramètres extraits
+    # 10. Probabilité de first down par type de jeu et yards à franchir
+    first_down_stats = []
+
+    for play_type in ['run', 'pass']:
+        for yard_cat in ['1-3', '4-6', '7-10', '11-20', '20+']:
+            filtered = df[(df['play_type'] == play_type) &
+                          (df['yardage_category'] == yard_cat)]
+
+            if len(filtered) > 0:
+                # Calculer si le jeu a atteint un premier down
+                first_down_prob = (filtered['PlayResult'] >= filtered['yardsToGo']).mean()
+
+                first_down_stats.append({
+                    'play_type': play_type,
+                    'yardage_category': yard_cat,
+                    'first_down_probability': first_down_prob,
+                    'num_plays': len(filtered)
+                })
+
+    first_down_df = pd.DataFrame(first_down_stats)
+    params['first_down_stats'] = first_down_df
+
+    # 11. Afficher un résumé des paramètres extraits
     print("\nParamètres extraits pour la simulation:")
     print(f"Yards moyens en course: {params['run_mean']:.2f} (écart-type: {params['run_std']:.2f})")
     print(f"Yards moyens en passe: {params['pass_mean']:.2f} (écart-type: {params['pass_std']:.2f})")
     print(f"Taux d'interception: {params['interception_rate']:.4f}")
-    print(f"Taux de fumble en course: {params['fumble_rate']:.4f}")
+    print(f"Taux de fumble : {params['fumble_rate']:.4f}")
     print(f"Taux de complétion de passe: {params['completion_rate']:.4f}")
+
+    # Visualisation pour la probabilité de premier down
+    if 'first_down_stats' in params:
+        plt.figure(figsize=(10, 6))
+        first_down_pivot = params['first_down_stats'].pivot(
+            index='yardage_category',
+            columns='play_type',
+            values='first_down_probability'
+        )
+        first_down_pivot.plot(kind='bar', color=['green', 'blue'])
+        plt.title('Probabilité d\'obtenir un premier down par type de jeu et yards à franchir')
+        plt.xlabel('Yards à franchir')
+        plt.ylabel('Probabilité')
+        plt.grid(True, alpha=0.3)
+        plt.xticks(rotation=0)
+        plt.savefig(f"{viz_dir}/first_down_probability_module1.png")
+        plt.close()
 
     return params
 
@@ -285,7 +366,7 @@ def calculate_scoring_stats(df):
     # - et la position change significativement
 
     # Trier par match, puis par temps de jeu
-    df_sorted = df.sort_values(['gameId', 'quarter', 'GameClock'])
+    df_sorted = df.sort_values(['gameId', 'quarter', 'GameClock']).copy()
 
     # Créer une colonne qui indique le début d'un nouveau drive
     df_sorted['new_drive'] = (
@@ -305,23 +386,29 @@ def calculate_scoring_stats(df):
             ((df_sorted['down'] == 1) &
              df_sorted['playDescription'].shift(1).str.contains('FIELD GOAL', case=False, na=False)))
 
+    # Gérer le premier jeu (toujours un nouveau drive)
+    df_sorted.loc[0, 'new_drive'] = True
+
     # Numéroter les drives
     df_sorted['drive_id'] = df_sorted['new_drive'].cumsum()
 
     # Calculer les statistiques par drive
     drive_stats = {}
 
-    # Calculer si un touchdown a été marqué dans un drive
     df_sorted['touchdown'] = (
-                (df_sorted['HomeScoreAfterPlay'] > df_sorted['HomeScoreBeforePlay']) |
-                (df_sorted['VisitorScoreAfterPlay'] > df_sorted[
-                    'VisitorScoreBeforePlay']))
+            ((df_sorted['HomeScoreBeforePlay'].shift(1) - df_sorted['HomeScoreBeforePlay']) > 4) |
+            ((df_sorted['VisitorScoreBeforePlay'].shift(1) - df_sorted['VisitorScoreBeforePlay']) > 4))
+
+    df_sorted['field_goal'] = (
+            ((df_sorted['HomeScoreBeforePlay'].shift(1) - df_sorted['HomeScoreBeforePlay']) == 3) |
+            ((df_sorted['VisitorScoreBeforePlay'].shift(1) - df_sorted['VisitorScoreBeforePlay']) == 3))
 
     # Agréger par drive
     drive_data = df_sorted.groupby('drive_id').agg({
-        'PlayResult': 'sum',  # Total des yards gagnés
-        'touchdown': 'max',  # Si le drive s'est terminé par un touchdown
-        'play_type': 'count'  # Nombre de jeux dans le drive
+        'PlayResult': 'sum',         # Total des yards gagnés
+        'touchdown': 'max',          # Si le drive s'est terminé par un touchdown
+        'field_goal': 'max',         # Si le drive s'est terminé par un field goal
+        'play_type': 'count'         # Nombre de jeux dans le drive
     }).reset_index()
 
     # Renommer les colonnes
@@ -330,17 +417,27 @@ def calculate_scoring_stats(df):
         'play_type': 'num_plays'
     })
 
+
     # Calculer les statistiques finales
+    drive_stats = {}
     drive_stats['avg_yards_per_drive'] = drive_data['total_yards'].mean()
     drive_stats['touchdown_rate'] = drive_data['touchdown'].mean()
+    drive_stats['field_goal_rate'] = drive_data['field_goal'].mean()
     drive_stats['avg_plays_per_drive'] = drive_data['num_plays'].mean()
 
-    # Points par drive (approximation: 7 points par touchdown)
-    drive_stats['points_per_drive'] = drive_data['touchdown'].mean() * 7
+    # Nombre total de drives et scoring drives
+    drive_stats['total_drives'] = len(drive_data)
+    drive_stats['total_touchdown_drives'] = drive_data['touchdown'].sum()
+    drive_stats['total_field_goal_drives'] = drive_data['field_goal'].sum()
+
+    # Points par drive (7 points par touchdown, 3 points par field goal)
+    drive_stats['points_per_drive'] = (drive_data['touchdown'].mean() * 7) + (drive_data['field_goal'].mean() * 3)
 
     print("\nStatistiques des drives réels NFL:")
+    print(f"Nombre total de drives: {drive_stats['total_drives']}")
     print(f"Yards moyens par drive: {drive_stats['avg_yards_per_drive']:.2f}")
-    print(f"Taux de touchdown: {drive_stats['touchdown_rate']:.4f}")
+    print(f"Taux de touchdown: {drive_stats['touchdown_rate']:.4f} ({drive_stats['total_touchdown_drives']} drives)")
+    print(f"Taux de field goal: {drive_stats['field_goal_rate']:.4f} ({drive_stats['total_field_goal_drives']} drives)")
     print(f"Jeux moyens par drive: {drive_stats['avg_plays_per_drive']:.2f}")
     print(f"Points moyens par drive: {drive_stats['points_per_drive']:.2f}")
 
@@ -388,3 +485,20 @@ if __name__ == "__main__":
     # Remplacer par le chemin vers votre fichier de données
     data_file = "../Data/plays.csv"
     main(data_file)
+
+    import pickle
+
+    # Charger le fichier de paramètres
+    with open("OutputFiles/nfl_simulation_params.pkl", "rb") as f:
+        params = pickle.load(f)
+
+    # Accéder aux statistiques
+    play_choice_stats = params['play_choice_stats']
+    first_down_stats = params['first_down_stats']
+
+    # Afficher les statistiques
+    print("Play Choice Stats:")
+    print(play_choice_stats)
+    print("\nFirst Down Stats:")
+    print(first_down_stats)
+
