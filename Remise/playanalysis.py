@@ -1,10 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# ----------------------
-# 1. Paramètres initiaux
-# ----------------------
-
 receivers_init = np.array([
     [5, 5],
     [5, 20],
@@ -24,10 +20,6 @@ defenders_init = np.array([
 ])
 
 sigma = np.array([3, 3, 3, 3, 5, 5, 5])
-
-# ----------------------
-# 2. Fonctions auxiliaires
-# ----------------------
 
 def move_receivers(receivers_init, route_type="quick_slant", t=1.0):
     receivers = receivers_init.copy()
@@ -56,10 +48,6 @@ def coverage_map(X, Y, defenders, sigmas):
     for (dx, dy), s in zip(defenders, sigmas):
         Z += np.exp(-((X - dy)**2 + (Y - dx)**2) / (2 * s**2))
     return Z
-
-# ----------------------
-# 3. Simulation des graphiques
-# ----------------------
 
 def simulate_static_graphics():
     np.random.seed(42)
@@ -130,9 +118,6 @@ def simulate_static_graphics():
     plt.tight_layout()
     plt.show()
 
-# ----------------------
-# 4. Exécution principale
-# ----------------------
 
 def main():
     simulate_static_graphics()
